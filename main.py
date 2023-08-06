@@ -9,18 +9,22 @@
 
 
 import discord
-import itertools
-
-import pickle
 import os
 
 from discord import Member
 from discord import Color
 
+from datetime import datetime
+
 from discord.ext import commands
 
-from datetime import datetime
-from webserver import keep_alive
+import Source.moderation as moderation
+import Source.miscellaneous as miscellaneous
+
+from Source.data_handler import load_data
+
+from Source.utility import get_all_caps
+from Source.webserver import keep_alive
 
 
 
@@ -42,6 +46,7 @@ reactionRoles = [
 client = commands.Bot(command_prefix=";", case_insensitivity=True, intents= discord.Intents.all())
 
 client.remove_command('help')
+moderation.set_client(client)
 
 serverRules = """
 **0) Breaking Discord's TOS (Terms of Service) and/or 
@@ -111,25 +116,6 @@ real life information is strictly prohibited.
 
 
 
-# --------------------------------------------------------------------------------------- #
-# -------------------------------------- FUNCTIONS -------------------------------------- #
-# --------------------------------------------------------------------------------------- #
-
-
-
-def returnPossibleCaps(string):
-  lu_sequence = ((c.lower(), c.upper()) for c in string)
-  array = [''.join(x) for x in itertools.product(*lu_sequence)]
-  returnArray = []
-  
-  for v in array:
-    if (v != string.lower()):
-      returnArray.insert(len(returnArray)+1,v)
-      
-  return returnArray
-
-
-
 
 # --------------------------------------------------------------------------------------- #
 # ------------------------------------ CLIENT EVENTS ------------------------------------ #
@@ -141,12 +127,12 @@ def returnPossibleCaps(string):
 
 @client.event
 async def on_ready():
-  await client.change_presence(activity=discord.Game(name='";help" | V1.0 | Currently Moderating The Shadow Wizard Money Gang...'))
+  await client.change_presence(activity=discord.Game(name='";help" | V1.2 | (BETA) | Currently Moderating The Shadow Wizard Money Gang...'))
   print(f"{client.user.display_name} Is online!")
 
 @client.event
 async def on_member_join(member):
-  userData = load_member_data(member.id)
+  userData = load_data(member.id)
   
   role = discord.utils.get(member.guild.roles, id=1118316334292406292)
   roleBan = discord.utils.get(member.guild.roles, id=1120961059990290522)
@@ -220,49 +206,7 @@ async def on_raw_reaction_remove(payload):
           print('WARNING: Could not find member.')
       else:
         print('WARNING: Could not find role.')
-
-
-
-
-# --------------------------------------------------------------------------------------- #
-# ----------------------------------- CLIENT COMMANDS ----------------------------------- #
-# --------------------------------------------------------------------------------------- #
-
-
-
-
-data_filename = "memberData.pickle"  
-
-class Data:
-    def __init__(self, warnings, softbanned):
-      self.warnings = warnings
-      self.softbanned = softbanned
-
-def load_data():
-    if os.path.isfile(data_filename):
-      with open(data_filename, "rb") as file:
-        return pickle.load(file)
-    else:
-      return dict()
-
-def load_member_data(member_ID):
-  data = load_data()
-
-  if member_ID not in data:
-    return Data(0, False)
-
-  return data[member_ID]
-
-def save_member_data(member_ID, member_data):
-  data = load_data()
-
-  data[member_ID] = member_data
-
-  with open(data_filename, "wb") as file:
-    pickle.dump(data, file)
-
-
-
+        
 
 
 # --------------------------------------------------------------------------------------- #
@@ -272,16 +216,16 @@ def save_member_data(member_ID, member_data):
 
 
 
-@client.command(pass_contect = True, name = 'ping', aliases=returnPossibleCaps('ping'))
+@client.command(pass_contect = True, name = 'ping', aliases=get_all_caps('ping'))
 async def ping(ctx):
   await ctx.send(f'Pong! **{round(client.latency * 1000)}ms**')
   
-@client.command(pass_context = True, name = 'setuprules', aliases=returnPossibleCaps('setuprules'))
+@client.command(pass_context = True, name = 'setuprules', aliases=get_all_caps('setuprules'))
 async def setuprules(ctx):
   global serverRules
 
   embed = discord.Embed(
-    title="# 📜 SERVER RULES 📜",
+    title="📜 SERVER RULES 📜",
     description=serverRules,
     colour = Color.pink()
   )
@@ -289,60 +233,36 @@ async def setuprules(ctx):
   if (ctx.author.id == 883536942711599127 or ctx.author.id == 743877445723095071):
     await ctx.send(embed=embed)
 
-@client.command(pass_context = True, name = 'sendstring', aliases=returnPossibleCaps('sendstring'))
+@client.command(pass_context = True, name = 'sendstring', aliases=get_all_caps('sendstring'))
 async def sendstring(ctx, *, string):
   if (ctx.author.id == 883536942711599127 or ctx.author.id == 743877445723095071):
     await ctx.send(string)
 
-@client.command(pass_contect = True, name = 'warnings', aliases=returnPossibleCaps('warnings'))
+@client.command(pass_contect = True, name = "warnings", aliases=get_all_caps("warnings"))
 async def warnings(ctx, member:Member = None):
   if (member == None):
     member = ctx.author
-  
-  userData = load_member_data(member.id)
-  
-  if (userData.warnings == 1):
-    await ctx.send(f"**{member.display_name}** has {userData.warnings} warning.")
-  else:
-    await ctx.send(f"**{member.display_name}** has {userData.warnings} warnings.")
+    
+  await moderation.check_user_warnings(ctx, member)
 
-@client.command(pass_context = True, name = 'unwarn', aliases=returnPossibleCaps('unwarn'))
+@client.command(pass_context = True, name = "unwarn", aliases = get_all_caps("unwarn"))
 @commands.has_role("Trusted Staff Member")
 async def unwarn(ctx, member:Member = None):
   if (member == ctx.author):
     await ctx.send(f'{ctx.author.mention} You cannot revoke warnings from yourself!')
     return
     
-  userData = load_member_data(member.id)
+  userData = load_data(member.id)
 
   if (userData.warnings == 0):
     await ctx.send(f'Unable to unwarn **{member.display_name}** due to having zero warnings!')
     return
 
-  userData.warnings = userData.warnings - 1
+  await moderation.unwarn_user(ctx, member)
 
-  embed = discord.Embed(
-    title=f"{member.display_name} Has had a warning revoked!",
-    description=f'**{member.display_name}** Has had a warning revoked by **{ctx.author.display_name}**',
-    colour = Color.teal(),
-    timestamp = datetime.utcnow()
-  )
-
-  embed.set_thumbnail(url=member.display_avatar.url)
-
-  save_member_data(member.id, userData)
-  
-  if (userData.warnings == 1):
-    embed.set_footer(text=f'{userData.warnings} Warning')
-  else:
-    embed.set_footer(text=f'{userData.warnings} Warnings')
-  
-  await client.get_channel(1118372347347476480).send(embed=embed)
-  await ctx.send(f"{member.mention} Has had a warning revoked.")
-
-@client.command(pass_context = True, name = 'warn', aliases=returnPossibleCaps('warn'))
+@client.command(pass_context = True, name = "warn", aliases = get_all_caps("warn"))
 @commands.has_role("Trusted Staff Member")
-async def warn(ctx, member:Member = None, *, reason=None):
+async def warn(ctx, member:Member = None, *, reason = None):
   if (member == ctx.author):
     await ctx.send(f'{ctx.author.mention} You cannot warn yourself!')
     return
@@ -351,29 +271,9 @@ async def warn(ctx, member:Member = None, *, reason=None):
     await ctx.send(f'{ctx.author.mention} Please provide a valid reason!')
     return  
     
-  userData = load_member_data(member.id)
+  await moderation.warn_user(ctx, member, reason)
 
-  userData.warnings = userData.warnings + 1
-
-  embed = discord.Embed(
-    title=f"{member.display_name} Has been warned!",
-    description=f"Reason: **{reason}**\nIssued By: **{ctx.author.display_name}**",
-    colour = Color.red(),
-    timestamp = datetime.utcnow()
-  )
-
-  save_member_data(member.id, userData)
-
-  embed.set_thumbnail(url=member.display_avatar.url)
-  if (userData.warnings == 1):
-    embed.set_footer(text=f'{userData.warnings} Warning')
-  else:
-    embed.set_footer(text=f'{userData.warnings} Warnings')
-  
-  await client.get_channel(1118372347347476480).send(embed=embed)
-  await ctx.send(f"{member.mention} Has been warned.")
-
-@client.command(pass_context = True, name = 'softban', aliases=returnPossibleCaps('softban'))
+@client.command(pass_context = True, name = "softban", aliases = get_all_caps("softban"))
 @commands.has_role("Trusted Staff Member")
 async def softban(ctx, member:Member = None, *, reason=None):
   if (member == ctx.author):
@@ -383,91 +283,31 @@ async def softban(ctx, member:Member = None, *, reason=None):
   if (reason == None):
     await ctx.send(f'{ctx.author.mention} Please provide a valid reason!')
     return 
-    
-  userData = load_member_data(member.id)
-  role = discord.utils.get(member.guild.roles, id=1120961059990290522)
 
-  userData.softbanned = True
+  await moderation.soft_ban_user(ctx, member, reason)
 
-  embed = discord.Embed(
-    title=f"{member.display_name} Has been soft-banned!",
-    description=f"Reason: **{reason}**\nIssued By: **{ctx.author.display_name}**",
-    colour = Color.red(),
-    timestamp = datetime.utcnow()
-  )
-
-  save_member_data(member.id, userData)
-
-  embed.set_thumbnail(url=member.display_avatar.url)
-  if (userData.warnings == 1):
-    embed.set_footer(text=f'{userData.warnings} Warning')
-  else:
-    embed.set_footer(text=f'{userData.warnings} Warnings')
-
-  await member.add_roles(role)
-  await client.get_channel(1118372347347476480).send(embed=embed)
-  await ctx.send(f"{member.mention} Has been soft-banned.")
-
-@client.command(pass_context = True, name = 'revokeban', aliases=returnPossibleCaps('revokeban'))
+@client.command(pass_context = True, name = "revokeban", aliases = get_all_caps("revokeban"))
 @commands.has_role("Trusted Staff Member")
 async def revokeban(ctx, member:Member = None):
   if (member == ctx.author):
     await ctx.send(f'{ctx.author.mention} You cannot unsoft-ban yourself!')
     return
 
-  userData = load_member_data(member.id)
-  role = discord.utils.get(member.guild.roles, id=1120961059990290522)
+  await moderation.revoke_user_softban(ctx, member)
 
-  userData.softbanned = False
-
-  embed = discord.Embed(
-    title=f"{member.display_name} Has had their soft-ban revoked!",
-    description=f"**{member.display_name}** has had their soft-ban revoked by **{ctx.author.display_name}**",
-    colour = Color.teal(),
-    timestamp = datetime.utcnow()
-  )
-
-  save_member_data(member.id, userData)
-
-  embed.set_thumbnail(url=member.display_avatar.url)
-  if (userData.warnings == 1):
-    embed.set_footer(text=f'{userData.warnings} Warning')
-  else:
-    embed.set_footer(text=f'{userData.warnings} Warnings')
-
-  await member.remove_roles(role)
-  await client.get_channel(1118372347347476480).send(embed=embed)
-  await ctx.send(f"{member.mention} Has had their soft-ban revoked.")
-
-@client.command(pass_context = True, name = 'rules', aliases=returnPossibleCaps('rules'))
+@client.command(pass_context = True, name = "rules", aliases = get_all_caps("rules"))
 async def rules(ctx):
   global serverRules
   
-  channel = await ctx.author.create_dm()
-  
-  await channel.send(serverRules)
-  await ctx.send(f"{ctx.author.mention}, I have sent you the server rules in your DM's.")
+  await miscellaneous.send_rules_in_dm(ctx, serverRules)
 
-@client.command(pass_context = True, name = 'report', aliases=returnPossibleCaps('report'))
-async def report(ctx, member: Member=None, *, reason):
+@client.command(pass_context = True, name = "report", aliases = get_all_caps("report"))
+async def report(ctx, member: Member = None, *, reason):
     if member == None:
       await ctx.send(f"{ctx.author.mention}, Please provid a valid member who you wish to report.")
       return;
 
-    userData = load_member_data(member.id)
-
-    embed = discord.Embed(
-      title=f"{ctx.author.display_name} Has reported {member.display_name}!",
-      description=f"Reason: **{reason}**",
-      colour = Color.red(),
-      timestamp = datetime.utcnow()
-    )
-
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text=f'{userData.warnings} Warnings')
-  
-    await client.get_channel(1119789664287608912).send(embed=embed)
-    await ctx.send(f"{ctx.author.mention}, Your report has went through. The staff will review your report!")
+    await moderation.report_user(ctx, member, reason)
 
 
 
